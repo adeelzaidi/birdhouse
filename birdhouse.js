@@ -25,6 +25,7 @@
 
 //// INCLUDES
 //// iphone requires complete path
+//// Load this before this birdhouse file, so other multiple libraries won´t load multiple times.
 //if (Ti.Platform.osname=='iphone') {
 //	Ti.include('lib/oauth.js');
 //	Ti.include('lib/sha1.js');
@@ -34,6 +35,11 @@
 //	Ti.include('oauth.js');
 //	Ti.include('sha1.js');
 //}
+
+//if you have problems with functions: debug, info, and warn, define them as global function shortcuts of
+//their respective Ti.API equivalents.
+// ex.
+//   if (!debug) { this.debug = function(value){ Ti.API.debug(value) ; }
 
 // THE CLASS
 function BirdHouse(params) {
@@ -223,6 +229,9 @@ function BirdHouse(params) {
 			}
 		}
 
+		//I don´t like redirects, so we better check if the pin code exists in the response.
+		//If it exists, we don´t have to wait for a redirect anymore.
+		//If it doen´t exist, well, wait for a redirect.
 		function check_if_got_access_verifier(e,callback){
 			debug('Checking if got access code verifier');
 			var html = webView.evalJS("document.documentElement.innerHTML"); //This works on android!
@@ -260,9 +269,7 @@ function BirdHouse(params) {
 				if (e.url!='https://api.twitter.com/oauth/authorize') {
 					closeAll();
 
-					if(typeof(callback)=='function'){
-						callback(false);
-					}
+					if(typeof(callback)=='function'){ callback(false); }
 
 					return false;
 				} else { // wait a bit to see if Twitter will redirect
@@ -1179,11 +1186,14 @@ function BirdHouse(params) {
 
 	// --------------------------------------------------------
 	// search
+	//
+	// Searches for a term in global tweets.
+	//
 	// In Parameters:
-	//  term - 
-	//  page - 
-	//  max -
-	//  callback - 
+	//  term - Text you will look for
+	//  page - Page to fetch
+	//  max -  Max items per page
+	//  callback - Function to send results to.
 	// https://dev.twitter.com/docs/api/1/get/search
 	// --------------------------------------------------------
 	function search(term,page,max, callback) {
@@ -1196,6 +1206,17 @@ function BirdHouse(params) {
 		},false);
 	}
 	
+	// --------------------------------------------------------
+	// timeline
+	//
+	// Fetches the timeline of another user. The timeline must be public, 
+	// or from an account that the logged in user is authorized to view.
+	//
+	// In Parameters:
+	//  user - The user who's timeline you want to fetch
+	//  callback - Function to send results to.
+	// https://dev.twitter.com/docs/api/1/get/statuses/user_timeline
+	// --------------------------------------------------------
 	function timeline(user, callback){
 		var params = { 
 			screen_name: user,
@@ -1213,6 +1234,16 @@ function BirdHouse(params) {
 		}, false);
 	}
 	
+	// --------------------------------------------------------
+	// searchUser
+	//
+	// Searches for a specified user.
+	//
+	// In Parameters:
+	//  user - The user who you are searching for
+	//  callback - Function to send results to.
+	// https://dev.twitter.com/docs/api/1/get/users/lookup
+	// --------------------------------------------------------
 	function searchUser(user, callback){
 		var url = 'http://api.twitter.com/1/users/lookup.json';
 		var params = {'screen_name': user, include_entities: true };
@@ -1224,8 +1255,16 @@ function BirdHouse(params) {
 		}, false);
 	}
 	
+	// --------------------------------------------------------
+	// retweet
 	//
-	//https://dev.twitter.com/docs/api/1/post/statuses/retweet/%3Aid
+	// Searches for a specified user.
+	//
+	// In Parameters:
+	//  id_str - id_str of the tweet you want retweeted by the current logged in user.
+	//  callback - Function to send results to.
+	// https://dev.twitter.com/docs/api/1/post/statuses/retweet/%3Aid
+	// --------------------------------------------------------
 	function retweet(id_str, callback){
 		var params = {
 			include_entities: true
