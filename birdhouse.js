@@ -527,7 +527,7 @@ function BirdHouse(params) {
 				error(XHR.responseText);
 				// execute the callback function
 				if (typeof(callback)=='function') {
-					callback(false);
+					callback(XHR.responseText);
 				}
 
 				return false;
@@ -1223,6 +1223,21 @@ function BirdHouse(params) {
 			return result;
 		}, false);
 	}
+	
+	//
+	//https://dev.twitter.com/docs/api/1/post/statuses/retweet/%3Aid
+	function retweet(id_str, callback){
+		var params = {
+			include_entities: true
+		};
+		var url = 'https://api.twitter.com/1/statuses/retweet/' + id_str + '.json';
+		return api(url, 'POST', null, function(response){
+			debug('retweet function response: '+ response);
+			var result = JSON.parse(response);
+			if (typeof(callback)=='function') { callback(result); }
+			return result;
+		}, true);
+	}
 	// --------------------------------------------------------
 	// ===================== PUBLIC ===========================
 	// --------------------------------------------------------
@@ -1237,6 +1252,7 @@ function BirdHouse(params) {
 	this.shorten_url = shorten_url;
 	this.search = search;
 	this.searchUser = searchUser;
+	this.retweet = retweet;
 
 	// --------------------------------------------------------
 	// =================== INITIALIZE =========================
