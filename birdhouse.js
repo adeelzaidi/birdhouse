@@ -23,17 +23,17 @@
 // Modified: May 2011
 // --------------------------------------------------------
 
-// INCLUDES
-// iphone requires complete path
-if (Ti.Platform.osname=='iphone') {
-	Ti.include('lib/oauth.js');
-	Ti.include('lib/sha1.js');
-}
-// android will search the current directory for files
-else {
-	Ti.include('oauth.js');
-	Ti.include('sha1.js');
-}
+//// INCLUDES
+//// iphone requires complete path
+//if (Ti.Platform.osname=='iphone') {
+//	Ti.include('lib/oauth.js');
+//	Ti.include('lib/sha1.js');
+//}
+//// android will search the current directory for files
+//else {
+//	Ti.include('oauth.js');
+//	Ti.include('sha1.js');
+//}
 
 // THE CLASS
 function BirdHouse(params) {
@@ -41,6 +41,7 @@ function BirdHouse(params) {
 	// ==================== PRIVATE ===========================
 	// --------------------------------------------------------
 	// VARIABLES
+	var obj = this;
 	var cfg = {
 		// user config
 		oauth_consumer_key: "",
@@ -88,7 +89,7 @@ function BirdHouse(params) {
 		};
 		message.parameters.push(['oauth_consumer_key', cfg.oauth_consumer_key]);
 		message.parameters.push(['oauth_signature_method', cfg.oauth_signature_method]);
-		message.parameters.push(["oauth_timestamp", OAuth.timestamp().toFixed(0)]);
+		message.parameters.push(["oauth_timestamp", OAuth.timestamp()]);
 		message.parameters.push(["oauth_nonce", OAuth.nonce(42)]);
 		message.parameters.push(["oauth_version", "1.0"]);
 
@@ -106,16 +107,17 @@ function BirdHouse(params) {
 	//	  be executed until get_access_token()
 	// --------------------------------------------------------
 	function get_request_token(callback) {
+		debug('get_request_token function');
 		var url = 'https://api.twitter.com/oauth/request_token';
 
-		var params = (cfg.callback_url!="")?'oauth_callback='+escape(cfg.callback_url):'';
+		var params = (cfg.callback_url!="")?'oauth_callback='+escape(cfg.callback_url):"";
 
 		api(url,'POST',params,function(resp){
+			debug('get_request_token response: '+ resp );
 			if (resp!=false) {
 				var responseParams = OAuth.getParameterMap(resp);
 				cfg.request_token = responseParams['oauth_token'];
 				cfg.request_token_secret = responseParams['oauth_token_secret'];
-
 
 				get_request_verifier(callback);
 			}
@@ -136,12 +138,14 @@ function BirdHouse(params) {
 	//	  be executed until get_access_token()
 	// --------------------------------------------------------
 	function get_request_verifier(callback) {
-		var url = "http://api.twitter.com/oauth/authorize?oauth_token="+cfg.request_token;
+		var url = "https://api.twitter.com/oauth/authorize?oauth_token="+cfg.request_token;
+
 		var win = Ti.UI.createWindow({
 			top: 0,
-			modal: true,
-			fullscreen: true
+			//modal: true,
+			//fullscreen: true
 		});
+
 		// add close button on iPhone
 		if (Ti.Platform.osname=='iphone' && cfg.show_login_toolbar) {
 			var webView = Ti.UI.createWebView({
@@ -194,16 +198,20 @@ function BirdHouse(params) {
 		win.add(webView);
 		win.open();
 
+		function closeAll(){
+			webView.stopLoading();
+			win.remove(webView);
+			win.close();
+		}
 
 		// since there is no difference between the 'success' or 'denied' page apart from content,
 		// we need to wait and see if Twitter redirects to the callback to determine success
 		function checkStatus() {
+			debug('Check status: '+ doinOurThing);
 			if (!doinOurThing) {
 				// access denied or something else was clicked
 				if (!loading) {
-					webView.stopLoading();
-					win.remove(webView);
-					win.close();
+					closeAll();
 
 					if(typeof(callback)=='function'){
 						callback(false);
@@ -215,11 +223,33 @@ function BirdHouse(params) {
 			}
 		}
 
+		function check_if_got_access_verifier(e,callback){
+			debug('Checking if got access code verifier');
+			var html = webView.evalJS("document.documentElement.innerHTML"); //This works on android!
+			var regex = /\<code\>(.*)\<\/code\>/i;
+			var result = regex.exec(html);
+			if ( result && result.length > 1) { 
+				//cancel checkstatus timeout cuz we got our thing.
+				doinOurThing = true;
+				cfg.request_verifier = result[1];
+				debug('Twitter Access Code Verifier: '+ cfg.request_verifier);
+				closeAll();
+				get_access_token(callback);
+				doingOurThing=false;
+				return true;
+			} else {
+				//still wait for timeout to run.
+				return false;
+			};	
+		}
+
 		webView.addEventListener('beforeload',function(){
 			loading = true;
 		});
 		webView.addEventListener('load',function(e){
 			loads++;
+			debug('webview loaded: '+ loads);
+			debug(webView.evalJS("document.documentElement.innerHTML"));
 
 			// the first time load, ignore, because it is the initial 'allow' page
 
@@ -228,23 +258,22 @@ function BirdHouse(params) {
 			if (loads==2) {
 				// something else was clicked
 				if (e.url!='https://api.twitter.com/oauth/authorize') {
-					webView.stopLoading();
-					win.remove(webView);
-					win.close();
+					closeAll();
 
 					if(typeof(callback)=='function'){
 						callback(false);
 					}
 
 					return false;
-				}
-				// wait a bit to see if Twitter will redirect
-				else {
+				} else { // wait a bit to see if Twitter will redirect
 					setTimeout(checkStatus,1000);
+					//meanwhile, lets check if we got an access verifier code.
+					check_if_got_access_verifier(e,callback);
 				}
 			}
 			// Twitter has redirected the page to our callback URL (most likely)
 			else if (loads==3) {
+				debug('Redirected a 3rd Time! We made it!');
 				doinOurThing = true; // kill the timeout b/c we are doin our thing
 
 				// success!
@@ -259,9 +288,7 @@ function BirdHouse(params) {
 
 				if (cfg.request_verifier!="") {
 					// my attempt at making sure the stupid webview dies
-					webView.stopLoading();
-					win.remove(webView);
-					win.close();
+					closeAll();
 
 					get_access_token(callback);
 
@@ -287,9 +314,13 @@ function BirdHouse(params) {
 	//	  it will get executed after being authorized
 	// --------------------------------------------------------
 	function get_access_token(callback) {
+		debug('Go fetch User Access Token');
 		var url = 'https://api.twitter.com/oauth/access_token';
-
+		debug('config:');
+		debug(cfg);
+		debug('oauth_token='+cfg.request_token+'&oauth_verifier='+cfg.request_verifier);
 		api(url,'POST','oauth_token='+cfg.request_token+'&oauth_verifier='+cfg.request_verifier,function(resp){
+			debug('Got User Access Token response: '+ resp);
 			if (resp!=false) {
 				var responseParams = OAuth.getParameterMap(resp);
 				cfg.access_token = responseParams['oauth_token'];
@@ -298,22 +329,19 @@ function BirdHouse(params) {
 				cfg.screen_name = responseParams['screen_name'];
 				accessor.tokenSecret = cfg.access_token_secret;
 
-
+				debug('cfg: '+ cfg);
 				save_access_token();
 
 				authorized = load_access_token();
 
 
-
+				debug('callback is: ' + typeof callback);
 				// execute the callback function
-				if(typeof(callback)=='function'){
-					callback(true);
-				}
+				if(typeof(callback)=='function'){ callback(true); }
 			} else {
+				error('get_access_token is false: ');
 				// execute the callback function
-				if(typeof(callback)=='function'){
-					callback(false);
-				}
+				if(typeof(callback)=='function'){ callback(false); }
 			}
 		},false,true,false);
 	}
@@ -328,12 +356,14 @@ function BirdHouse(params) {
 		// try to find file
 		var file = Ti.Filesystem.getFile(Ti.Filesystem.applicationDataDirectory, 'twitter.config');
 		if (!file.exists()) {
+			error('load_acces_token file does not exist');
 			return false;
 		}
 
 		// try to read file
 		var contents = file.read();
 		if (contents == null) {
+			error('load_acces_token file does not have data');
 			return false;
 		}
 
@@ -341,6 +371,7 @@ function BirdHouse(params) {
 		try {
 			var config = JSON.parse(contents.text);
 		} catch(e) {
+			error('load_acces_token file incorrect format');
 			return false;
 		}
 
@@ -365,20 +396,25 @@ function BirdHouse(params) {
 	// stay around even if the app has been recompiled.
 	// --------------------------------------------------------
 	function save_access_token() {
-		// get file if it exists
-		var file = Ti.Filesystem.getFile(Ti.Filesystem.applicationDataDirectory, 'twitter.config');
-		// create file if it doesn't exist
-		if (file == null) {
-			file = Ti.Filesystem.createFile(Ti.Filesystem.applicationDataDirectory, 'twitter.config');
+		try {
+			// get file if it exists
+			var file = Ti.Filesystem.getFile(Ti.Filesystem.applicationDataDirectory, 'twitter.config');
+			// create file if it doesn't exist
+			if (file == null) {
+				file = Ti.Filesystem.createFile(Ti.Filesystem.applicationDataDirectory, 'twitter.config');
+			}
+
+			// write config
+			var config = {
+				access_token: cfg.access_token,
+				access_token_secret: cfg.access_token_secret
+			};
+			debug('will save this config into file: ');
+			debug(config);
+			file.write(JSON.stringify(config));
+		} catch(e) {
+			error( e );
 		}
-
-		// write config
-		var config = {
-			access_token: cfg.access_token,
-			access_token_secret: cfg.access_token_secret
-		};
-		file.write(JSON.stringify(config));
-
 	}
 
 	// --------------------------------------------------------
@@ -415,7 +451,8 @@ function BirdHouse(params) {
 	//   success.
 	// --------------------------------------------------------
 	function api(url, method, params, callback, auth, setUrlParams, setHeader) {
-		var finalUrl = '';
+		info('api function');
+		var finalUrl = "";
 
 		// authorize user if not authorized, and call this in the callback
 		if (!authorized && (typeof(auth)=='undefined' || auth===true)) {
@@ -434,7 +471,7 @@ function BirdHouse(params) {
 		}
 		// user is authorized so execute API
 		else {
-
+			debug('api is authorized: ' + authorized);
 			// VALIDATE INPUT
 			if (method!="POST" && method!="GET") {
 				return false;
@@ -450,10 +487,14 @@ function BirdHouse(params) {
 				params = params + "&";
 			}
 
-			if (cfg.access_token!='') {
+			if (cfg.access_token!="") {
 				params = params + "oauth_token="+cfg.access_token;
 			}
 			var message = set_message(url, method, params);
+
+			debug('params: '+ params);
+			debug('message: ' + message);
+			debug(message);
 
 			OAuth.SignatureMethod.sign(message, accessor);
 
@@ -469,10 +510,10 @@ function BirdHouse(params) {
 
 
 			var XHR = Ti.Network.createHTTPClient();
-			
+
 			// on success, grab the request token
 			XHR.onload = function() {
-
+				debug('birdhouse api onload: ' + XHR.responseText);
 				// execute the callback function
 				if (typeof(callback)=='function') {
 					callback(XHR.responseText);
@@ -483,6 +524,7 @@ function BirdHouse(params) {
 
 			// on error, show message
 			XHR.onerror = function(e) {
+				error(XHR.responseText);
 				// execute the callback function
 				if (typeof(callback)=='function') {
 					callback(false);
@@ -490,7 +532,7 @@ function BirdHouse(params) {
 
 				return false;
 			}
-			
+
 			XHR.open(method, finalUrl, false);
 
 			// if we are getting request tokens do not set the HTML header
@@ -508,7 +550,7 @@ function BirdHouse(params) {
 
 				XHR.setRequestHeader("Authorization", header);
 			}
-			
+
 			XHR.send();
 		}
 	}
@@ -530,17 +572,20 @@ function BirdHouse(params) {
 		// just in case someone only wants to send a callback
 		if (typeof(text)=='function' && typeof(callback)=='undefined') {
 			callback = text;
-			text = '';
+			text = "";
 		}
 		if (typeof(text)=='undefined') {
-			text = '';
+			text = "";
 		}
 
-		var obj = this;
+		//var obj = this;
 		obj.mytweet = text;
 		if (authorized === false) {
+			info('Twitter is not Authorized');
 			authorize(function(resp){
+				debug('got Authorization response:' + resp);
 				if (resp) {
+					debug(obj);
 					obj.tweet(obj.mytweet);
 
 					return true;
@@ -555,6 +600,7 @@ function BirdHouse(params) {
 				}
 			});
 		} else {
+			info('Twitter is Authorized');
 			var chars = (typeof(text)!='undefined' && text!=null)?text.length:0;
 
 			var winBG = Titanium.UI.createWindow({
@@ -565,6 +611,7 @@ function BirdHouse(params) {
 			// the UI window looks completely different on iPhone vs. Android
 			// iPhone UI
 			if (Ti.Platform.osname=='iphone') {
+				info('Building iPhone UI');
 				var winTW = Titanium.UI.createWindow({
 					height:((Ti.Platform.displayCaps.platformHeight*0.5)-15), // half because the keyboard takes up half
 					width:(Ti.Platform.displayCaps.platformWidth-20),
@@ -603,7 +650,7 @@ function BirdHouse(params) {
 					top:((Ti.Platform.displayCaps.platformHeight*0.5)-55),
 					left:(Ti.Platform.displayCaps.platformWidth-60), // 30 px from right side,
 					color:'#FFF',
-					text:(parseInt((140-chars))+'')
+					text:(parseInt((140-chars))+"")
 				});
 				// show keyboard on load
 				winTW.addEventListener('open',function(){
@@ -612,6 +659,7 @@ function BirdHouse(params) {
 			}
 			// Android UI
 			else {
+				info ('Building Android UI');
 				var winTW = Titanium.UI.createWindow({
 					height:264,
 					top:10,
@@ -645,7 +693,7 @@ function BirdHouse(params) {
 					bottom:10,
 					right:14,
 					color:'#FFF',
-					text:(parseInt((140-chars))+'')
+					text:(parseInt((140-chars))+"")
 				});
 			}
 			tweet.addEventListener('change',function(e) {
@@ -663,10 +711,12 @@ function BirdHouse(params) {
 						charcount.color = '#FFF';
 					}
 				}
-				charcount.text = parseInt(chars)+'';
+				charcount.text = parseInt(chars)+"";
 			});
 			btnTW.addEventListener('click',function() {
+				info('Sending tweet: ' + tweet.value);
 				send_tweet("status="+escape(tweet.value),function(retval){
+					info('tweet sent: '+ retval);
 					if (retval===false) {
 						// execute the callback function
 						if (typeof(callback)=='function') {
@@ -728,13 +778,13 @@ function BirdHouse(params) {
 		// just in case someone only wants to send a callback
 		if (typeof(text)=='function' && typeof(callback)=='undefined') {
 			callback = text;
-			text = '';
+			text = "";
 		}
 		if (typeof(text)=='undefined') {
-			text = '';
+			text = "";
 		}
 
-		var obj = this;
+		//var obj = this;
 		obj.mytweet = text;
 		if (authorized === false) {
 			authorize(function(resp){
@@ -807,7 +857,7 @@ function BirdHouse(params) {
 					top:((Ti.Platform.displayCaps.platformHeight*0.5)-55),
 					left:(Ti.Platform.displayCaps.platformWidth-60), // 30 px from right side,
 					color:'#FFF',
-					text:(parseInt((140-chars))+'')
+					text:(parseInt((140-chars))+"")
 				});
 				// show keyboard on load
 				winTW.addEventListener('open',function(){
@@ -854,7 +904,7 @@ function BirdHouse(params) {
 					bottom:10,
 					right:14,
 					color:'#FFF',
-					text:(parseInt((140-chars))+'')
+					text:(parseInt((140-chars))+"")
 				});
 			}
 			tweet.addEventListener('change',function(e) {
@@ -872,7 +922,7 @@ function BirdHouse(params) {
 						charcount.color = '#FFF';
 					}
 				}
-				charcount.text = parseInt(chars)+'';
+				charcount.text = parseInt(chars)+"";
 			});
 			btnShorten.addEventListener('click',function() {
 				var actInd = Titanium.UI.createActivityIndicator({
@@ -964,16 +1014,15 @@ function BirdHouse(params) {
 	//	callback (Function) - function to call on completion
 	// --------------------------------------------------------
 	function send_tweet(params,callback) {
-		api('http://api.twitter.com/1/statuses/update.json','POST',params,function(resp){
+		debug('send_tweet function');
+		debug('With parameters: '+ params);
+		api('https://api.twitter.com/1/statuses/update.json','POST',params,function(resp){
+			debug('send_tweet function response: '+ resp);
 			if (resp!=false) {
-				if (typeof(callback)=='function') {
-					callback(true);
-				}
+				if (typeof(callback)=='function') { callback(true); }
 				return true;
 			} else {
-				if (typeof(callback)=='function') {
-					callback(false);
-				}
+				if (typeof(callback)=='function') { callback(false); }
 				return false;
 			}
 		});
@@ -996,7 +1045,7 @@ function BirdHouse(params) {
 
 
 		var XHR = Titanium.Network.createHTTPClient();
-		XHR.open("GET","http://www.twe.ly/short.php?url="+url+"&json=1");
+		XHR.open("GET","https://www.twe.ly/short.php?url="+url+"&json=1");
 		XHR.onload = function () {
 			try {
 				shorturl = JSON.parse(XHR.responseText);
@@ -1039,10 +1088,10 @@ function BirdHouse(params) {
 		// just in case someone only wants to send a callback
 		if (typeof(params)=='function' && typeof(callback)=='undefined') {
 			callback = params;
-			params = '';
+			params = "";
 		}
 
-		api("https://api.twitter.com/1/statuses/friends_timeline.json","GET",params,function(tweets){
+		api("http://api.twitter.com/1/statuses/home_timeline.json","GET",params,function(tweets){
 			try {
 				tweets = JSON.parse(tweets);
 			} catch (e) {
@@ -1075,6 +1124,7 @@ function BirdHouse(params) {
 	// Returns: true if the user is authorized
 	// --------------------------------------------------------
 	function authorize(callback) {
+		debug('autorize function: '+ authorized);
 		if (!authorized) {
 			get_request_token(callback); // get_request_token or a function it calls will call callback
 
@@ -1128,6 +1178,52 @@ function BirdHouse(params) {
 	}
 
 	// --------------------------------------------------------
+	// search
+	// In Parameters:
+	//  term - 
+	//  page - 
+	//  max -
+	//  callback - 
+	// https://dev.twitter.com/docs/api/1/get/search
+	// --------------------------------------------------------
+	function search(term,page,max, callback) {
+		var params = { 'q': term, 'page':page || 1, 'rpp': max || 10, result_type: 'mixed', include_entities: true };
+		return api('http://search.twitter.com/search.json?', 'GET', params, function(response){
+			debug('search function response: '+ response);
+			var result = JSON.parse(response);
+			if (typeof(callback)=='function') { callback(result); }
+			return result;
+		},false);
+	}
+	
+	function timeline(user, callback){
+		var params = { 
+			screen_name: user,
+			include_entities:true,
+			include_rts:true,
+			//trim_user: 1,
+			//count:2
+		};
+		var url = 'https://api.twitter.com/1/statuses/user_timeline.json';
+		return api(url, 'GET', params, function(response){
+			debug('timeline function response: '+ response);
+			var result = JSON.parse(response);
+			if (typeof(callback)=='function') { callback(result); }
+			return result;
+		}, false);
+	}
+	
+	function searchUser(user, callback){
+		var url = 'http://api.twitter.com/1/users/lookup.json';
+		var params = {'screen_name': user, include_entities: true };
+		return api(url,'GET', params, function(response){
+			debug('search function response: '+ response);
+			var result = JSON.parse(response);
+			if (typeof(callback)=='function') { callback(result); }
+			return result;
+		}, false);
+	}
+	// --------------------------------------------------------
 	// ===================== PUBLIC ===========================
 	// --------------------------------------------------------
 	this.authorize = authorize;
@@ -1135,9 +1231,12 @@ function BirdHouse(params) {
 	this.api = api;
 	this.authorized = function() { return authorized; }
 	this.get_tweets = get_tweets;
+	this.timeline = timeline;
 	this.tweet = tweet;
 	this.short_tweet = short_tweet;
 	this.shorten_url = shorten_url;
+	this.search = search;
+	this.searchUser = searchUser;
 
 	// --------------------------------------------------------
 	// =================== INITIALIZE =========================
@@ -1159,4 +1258,3 @@ function BirdHouse(params) {
 	}
 	authorized = load_access_token(); // load the token on startup to see if authorized
 };
-
